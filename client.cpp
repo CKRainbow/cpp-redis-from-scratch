@@ -5,14 +5,9 @@
 #include <unistd.h>
 #include <string.h>
 
-void die(const char* msg) {
-    perror(msg);
-    exit(EXIT_FAILURE);
-}
+#include "util.hpp"
 
-void msg(const char* msg) {
-    std::cout << msg << std::endl;
-}
+static int32_t query(int fd, const char *query);
 
 int main() 
 {
@@ -32,16 +27,60 @@ int main()
         die("connect()");
     }
     
-    char message[] = "hello";
-    write(fd, message, strlen(message));
-    
-    char rbuf[64] = {};
-    int n = read(fd, rbuf, sizeof(rbuf) - 1);
-    if (n < 0)
+    int32_t err = query(fd, "hello1");
+    if (err)
     {
-        die("read()");
+        goto L_DONE;
     }
-    printf("server says: %s\n", rbuf);
+    
+    err = query(fd, "hello2");
+    if (err)
+    {
+        goto L_DONE;
+    }
 
+ L_DONE:
     close(fd);
+    return 0;
+}
+
+static int32_t query(int fd, const char *query)
+{
+    uint32_t n = (uint32_t)strlen(query);
+    if (n > K_MAX_MSG)
+    {
+        return -1;
+    }
+    
+    char wbuf[K_MAX_MSG + 4] = {};
+    memcpy(wbuf, &n, 4);
+    memcpy(wbuf + 4, query, n);
+    if (int32_t err = write_full(fd, wbuf, n + 4))
+    {
+        return err;
+    }
+    
+    char rbuf[K_MAX_MSG + 4] = {};
+    errno = 0;
+    int32_t err = read_full(fd, rbuf, 4);
+    if (err)
+    {
+        msg(errno ? "read() error" : "EOF");
+        return err;
+    }
+    memcpy(&n, rbuf, 4);
+    if (n > K_MAX_MSG)
+    {
+        msg("too long");
+        return -1;
+    }
+    
+    if (int32_t err = read_full(fd, rbuf + 4, n))
+    {
+        msg("read() error");
+        return err;
+    }
+    
+    printf("server says: %s\n", rbuf + 4);
+    return 0;
 }

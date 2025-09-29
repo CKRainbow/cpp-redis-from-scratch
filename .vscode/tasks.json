@@ -12,8 +12,9 @@
 				"-O2",
 				"-g",
 				"client.cpp",
+				"util.cpp",
 				"-o",
-				"client"
+				"bin/client"
 			],
 			"options": {
 				"cwd": "${workspaceFolder}"
@@ -38,8 +39,9 @@
 				"-O2",
 				"-g",
 				"server.cpp",
+				"util.cpp",
 				"-o",
-				"server"
+				"bin/server"
 			],
 			"options": {
 				"cwd": "${workspaceFolder}"

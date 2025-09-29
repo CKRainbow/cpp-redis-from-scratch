@@ -5,6 +5,8 @@
 #include <unistd.h>
 #include <string.h>
 
+#include "util.hpp"
+
 /*
 struct sockaddr_in {
     uint16_t sin_family; // AF_INET or others
@@ -30,16 +32,7 @@ struct _in6_addr {
 */
 
 static void do_something(int fd);
-
-// 错误处理函数
-void die(const char* msg) {
-    perror(msg);
-    exit(EXIT_FAILURE);
-}
-
-void msg(const char* msg) {
-    std::cout << msg << std::endl;
-}
+static int32_t one_request(int fd);
 
 int main() 
 {
@@ -80,9 +73,54 @@ int main()
             continue;
         }
         
-        do_something(conn_fd);
+        while (true)
+        {
+            int32_t err = one_request(conn_fd);
+            if (err)
+            {
+                break;
+            }
+        }
+
         close(conn_fd);
     }
+}
+
+static int32_t one_request(int fd)
+{
+    char buf[4 + K_MAX_MSG] = {};
+    errno = 0; // change only when syscall failed
+    int32_t err = read_full(fd, buf, 4);
+    if (err)
+    {
+        msg(errno == 0 ? "EOF" : "read() error");
+        return err;
+    }
+    
+    u_int32_t len = 0;
+    memcpy(&len, buf, 4);
+    if (len > K_MAX_MSG)
+    {
+        msg("message too long");
+        return -1;
+    };
+
+    err = read_full(fd, buf + 4, len);
+    if (err)
+    {
+        msg("read() error");
+        return err;
+    }
+    
+    printf("client says: %s\n", buf + 4);
+    
+    const char *reply = "world";
+    char wbuf[4 + sizeof(reply)] = {};
+    len = (u_int32_t)(strlen(reply));
+    memcpy(wbuf, &len, 4);
+    memcpy(wbuf + 4, reply, len);
+    
+    return write_full(fd, wbuf, 4 + len);
 }
 
 static void do_something(int fd)
