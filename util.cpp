@@ -70,105 +70,20 @@ void buf_consume(std::vector<uint8_t> &buf, size_t len)
     buf.erase(buf.begin(), buf.begin() + len);
 }
 
+// void buf_append(struct Buffer &buf, const uint8_t *data, size_t len)
+// {
+// }
+
+// void buf_consume(struct Buffer &buf, size_t len)
+// {
+//     assert(buf.data_begin - buf.data_end >= len);
+//     buf.data_begin += len;
+// }
+
 void fd_set_nonblock(int fd)
 {
     int flags = fcntl(fd, F_GETFL, 0); // get the flags
     flags |= O_NONBLOCK;
     fcntl(fd, F_SETFL, flags); // set the flags
     // TODO: handle errors
-}
-
-Conn *handle_accept(int fd)
-{
-    struct sockaddr_in addr;
-    socklen_t len = sizeof(addr);
-
-    int connfd = accept(fd, (struct sockaddr *)&addr, &len);
-    if (connfd < 0)
-    {
-        return NULL;
-    }
-
-    fd_set_nonblock(connfd);
-    Conn *conn = new Conn();
-    conn->fd = connfd;
-    conn->want_read = true;
-    return conn;
-}
-
-void handle_read(Conn *conn)
-{
-    uint8_t buf[64 * 1024];
-    // non-blocking read
-    ssize_t rv = read(conn->fd, buf, sizeof(buf));
-    if (rv <= 0)
-    {
-        conn->want_close = true;
-        return;
-    }
-
-    // append to read_buf
-    buf_append(conn->read_buf, buf, (size_t)rv);
-
-    // try to parse the buf
-    try_one_request(conn);
-
-    if (conn->write_buf.size() > 0)
-    {
-        conn->want_write = true;
-        conn->want_read = false;
-    }
-}
-
-bool try_one_request(Conn *conn)
-{
-    if (conn->read_buf.size() < 4)
-    {
-        return false;
-    }
-
-    uint32_t len = 0;
-    memcpy(&len, conn->read_buf.data(), 4);
-    if (len > K_MAX_MSG) // protocol error
-    {
-        conn->want_close = true;
-        return false;
-    }
-
-    if (4 + len > conn->read_buf.size()) // not ready
-    {
-        return false;
-    }
-
-    const uint8_t *request = &conn->read_buf[4];
-
-    printf("[%d] request: %.*s\n", conn->fd, (int)len, request);
-
-    // TODO: parse the request body
-
-    // generate response (echo)
-    buf_append(conn->write_buf, (const uint8_t *)&len, 4);
-    buf_append(conn->write_buf, request, len);
-
-    buf_consume(conn->read_buf, 4 + len);
-    return true;
-}
-
-void handle_write(Conn *conn)
-{
-    assert(conn->write_buf.size() > 0);
-    ssize_t rv = write(conn->fd, conn->write_buf.data(), conn->write_buf.size());
-    if (rv < 0)
-    {
-        conn->want_close = true;
-        return;
-    }
-
-    buf_consume(conn->write_buf, rv);
-
-    if (conn->write_buf.size() == 0)
-    {
-        conn->want_write = false;
-        conn->want_read = true;
-    }
 }

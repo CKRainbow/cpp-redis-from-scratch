@@ -7,6 +7,7 @@
 #include <poll.h>
 
 #include <vector>
+#include <map>
 
 #include "util.hpp"
 
@@ -36,6 +37,19 @@ struct _in6_addr {
 
 static void do_something(int fd);
 static int32_t one_request(int fd);
+
+Conn *handle_accept(int fd);
+void handle_read(Conn *conn);
+void handle_write(Conn *conn);
+
+bool try_one_request(Conn *conn);
+
+int32_t parse_req(const uint8_t *data, size_t size, std::vector<std::string> &out);
+bool read_u32(const uint8_t *&data, const uint8_t *end, uint32_t &len);
+bool read_string(const uint8_t *&data, const uint8_t *end, uint32_t len, std::string &out);
+
+void do_request(std::vector<std::string> &cmd, Response &resp);
+void make_response(Response &resp, std::vector<uint8_t> &data);
 
 int event_loop(int fd)
 {
@@ -136,6 +150,210 @@ int main()
     }
 
     event_loop(fd);
+}
+
+Conn *handle_accept(int fd)
+{
+    struct sockaddr_in addr;
+    socklen_t len = sizeof(addr);
+
+    int connfd = accept(fd, (struct sockaddr *)&addr, &len);
+    if (connfd < 0)
+    {
+        return NULL;
+    }
+
+    fd_set_nonblock(connfd);
+    Conn *conn = new Conn();
+    conn->fd = connfd;
+    conn->want_read = true;
+    return conn;
+}
+
+void handle_read(Conn *conn)
+{
+    uint8_t buf[64 * 1024];
+    // non-blocking read
+    ssize_t rv = read(conn->fd, buf, sizeof(buf));
+    if (rv <= 0)
+    {
+        conn->want_close = true;
+        return;
+    }
+
+    // append to read_buf
+    buf_append(conn->read_buf, buf, (size_t)rv);
+
+    // try to parse the buf
+    while (try_one_request(conn))
+    {
+    }
+
+    if (conn->write_buf.size() > 0)
+    {
+        conn->want_write = true;
+        conn->want_read = false;
+
+        return handle_write(conn);
+    }
+}
+
+bool try_one_request(Conn *conn)
+{
+    if (conn->read_buf.size() < 4)
+    {
+        return false;
+    }
+
+    uint32_t len = 0;
+    memcpy(&len, conn->read_buf.data(), 4);
+    if (len > K_MAX_MSG) // protocol error
+    {
+        conn->want_close = true;
+        return false;
+    }
+
+    if (4 + len > conn->read_buf.size()) // not ready
+    {
+        return false;
+    }
+
+    const uint8_t *request = &conn->read_buf[4];
+
+    std::vector<std::string> cmd;
+    if (parse_req(request, len, cmd))
+    {
+        msg("bad request");
+        conn->want_close = true;
+        return false;
+    }
+
+    Response response;
+    do_request(cmd, response);
+    make_response(response, conn->write_buf);
+
+    buf_consume(conn->read_buf, 4 + len);
+    return true;
+}
+
+void handle_write(Conn *conn)
+{
+    assert(conn->write_buf.size() > 0);
+    errno = 0;
+    ssize_t rv = write(conn->fd, conn->write_buf.data(), conn->write_buf.size());
+    if (rv < 0)
+    {
+        if (errno == EAGAIN) // buffer may be full
+        {
+            return;
+        }
+        conn->want_close = true;
+        return;
+    }
+
+    buf_consume(conn->write_buf, rv);
+
+    if (conn->write_buf.size() == 0)
+    {
+        conn->want_write = false;
+        conn->want_read = true;
+    }
+}
+
+int32_t parse_req(const uint8_t *data, size_t len, std::vector<std::string> &out)
+{
+    const uint8_t *end = data + len;
+    uint32_t nstr = 0;
+    if (!read_u32(data, end, nstr))
+    {
+        return -1;
+    }
+    if (nstr > K_MAX_ARG)
+    {
+        return -1;
+    }
+    // printf("parse_req: nstr = %d\n", nstr);
+
+    while (out.size() < nstr)
+    {
+        uint32_t len = 0;
+        if (!read_u32(data, end, len))
+        {
+            return -1;
+        }
+        // printf("parse_req: len = %d\n", len);
+        out.push_back(std::string());
+        if (!read_string(data, end, len, out.back()))
+        {
+            return -1;
+        }
+        // printf("parse_req: out.back() = %s\n", out.back().c_str());
+    }
+    if (data != end)
+    {
+        return -1; // trailing garbage
+    }
+    return 0;
+}
+
+bool read_u32(const uint8_t *&data, const uint8_t *end, uint32_t &out)
+{
+    if (data + 4 > end)
+    {
+        return false;
+    }
+    memcpy(&out, data, 4);
+    data += 4;
+    return true;
+}
+
+bool read_string(const uint8_t *&data, const uint8_t *end, uint32_t len, std::string &out)
+{
+    if (data + len > end)
+    {
+        return false;
+    }
+    out.assign(data, data + len);
+    data += len;
+    return true;
+}
+
+std::map<std::string, std::string> g_data;
+
+void do_request(std::vector<std::string> &cmd, Response &resp)
+{
+    if (cmd.size() == 2 && cmd[0] == "get")
+    {
+        auto it = g_data.find(cmd[1]);
+        if (it == g_data.end())
+        {
+            resp.status = RES_NX;
+            return;
+        }
+        const std::string &val = it->second; // why reference?
+        resp.data.assign(val.begin(), val.end());
+    }
+    else if (cmd.size() == 3 && cmd[0] == "set")
+    {
+        g_data[cmd[1]] = cmd[2];
+    }
+    else if (cmd.size() == 2 && cmd[0] == "del")
+    {
+        g_data.erase(cmd[1]);
+    }
+    else
+    {
+        resp.status = RES_ERR;
+    }
+}
+
+// Exercise: Optimize the code so that the response data goes directly to Conn::outgoing.
+void make_response(Response &resp, std::vector<uint8_t> &data)
+{
+    uint32_t resp_len = (uint32_t)resp.data.size() + 4;
+    buf_append(data, (const uint8_t *)&resp_len, 4);
+    buf_append(data, (const uint8_t *)&resp.status, 4);
+    buf_append(data, (const uint8_t *)resp.data.data(), resp.data.size());
 }
 
 static int32_t one_request(int fd)
