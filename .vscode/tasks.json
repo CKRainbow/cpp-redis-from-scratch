@@ -40,6 +40,7 @@
 				"-g",
 				"server.cpp",
 				"util.cpp",
+				"hashtable.cpp",
 				"-o",
 				"bin/server"
 			],

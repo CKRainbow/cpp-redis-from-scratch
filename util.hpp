@@ -53,3 +53,4 @@ void buf_consume(std::vector<uint8_t> &buf, size_t len);
 // void buf_consume(struct Buffer &buf, size_t len);
 
 void fd_set_nonblock(int fd);
+uint64_t str_hash(const uint8_t *str, size_t len);

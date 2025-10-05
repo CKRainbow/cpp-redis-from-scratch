@@ -9,6 +9,7 @@
 #include <vector>
 #include <map>
 
+#include "hashtable.hpp"
 #include "util.hpp"
 
 /*
@@ -34,6 +35,10 @@ struct _in6_addr {
     uint8_t _s6_addr[16];
 };
 */
+
+// find the head of struct T
+#define container_of(ptr, T, member) \
+    ((T *)((char *)ptr - offsetof(T, member)))
 
 static void do_something(int fd);
 static int32_t one_request(int fd);
@@ -318,28 +323,100 @@ bool read_string(const uint8_t *&data, const uint8_t *end, uint32_t len, std::st
     return true;
 }
 
-std::map<std::string, std::string> g_data;
+static struct
+{
+    HMap map;
+} g_data;
+
+struct Entry
+{
+    struct HNode node; // hash table node
+    std::string key;
+    std::string value;
+};
+
+static bool entry_eq(HNode *lhs, HNode *rhs)
+{
+    struct Entry *a_entry = container_of(lhs, struct Entry, node);
+    struct Entry *b_entry = container_of(rhs, struct Entry, node);
+    return a_entry->key == b_entry->key;
+}
+
+// std::map<std::string, std::string>
+//     g_data;
+
+static void do_get(std::vector<std::string> &cmd, Response &resp)
+{
+    Entry key;
+    key.key.swap(cmd[1]);
+    key.node.hcode = str_hash((const uint8_t *)key.key.data(), key.key.size());
+
+    HNode *lookup_node = hm_lookup(&g_data.map, &key.node, &entry_eq);
+    if (!lookup_node)
+    {
+        resp.status = RES_NX;
+        return;
+    }
+
+    Entry *entry = container_of(lookup_node, Entry, node);
+    printf("do_get: key = %s, val = %s\n", entry->key.c_str(), entry->value.c_str());
+
+    const std::string &val = entry->value; // reference instead of copying
+    assert(val.size() < K_MAX_MSG);
+    resp.data.assign(val.begin(), val.end());
+}
+
+static void do_set(std::vector<std::string> &cmd, Response &resp)
+{
+    Entry entry;
+    entry.key.swap(cmd[1]);
+    entry.node.hcode = str_hash((const uint8_t *)entry.key.data(), entry.key.size());
+
+    HNode *lookup_node = hm_lookup(&g_data.map, &entry.node, &entry_eq);
+    if (lookup_node)
+    {
+        container_of(lookup_node, Entry, node)->value.swap(cmd[2]);
+    }
+    else
+    {
+        Entry *new_entry = new Entry();
+        new_entry->key.swap(entry.key);
+        new_entry->value.swap(cmd[2]);
+        new_entry->node.hcode = entry.node.hcode;
+        printf("do_set: key = %s, val = %s\n", new_entry->key.c_str(), new_entry->value.c_str());
+        hm_insert(&g_data.map, &new_entry->node);
+    }
+    resp.status = RES_OK;
+}
+
+static void do_del(std::vector<std::string> &cmd, Response &resp)
+{
+    Entry entry;
+    entry.key.swap(cmd[1]);
+    entry.node.hcode = str_hash((const uint8_t *)entry.key.data(), entry.key.size());
+
+    HNode *del_node = hm_delete(&g_data.map, &entry.node, &entry_eq);
+    if (!del_node)
+    {
+        resp.status = RES_NX;
+        return;
+    }
+    resp.status = RES_OK;
+}
 
 void do_request(std::vector<std::string> &cmd, Response &resp)
 {
     if (cmd.size() == 2 && cmd[0] == "get")
     {
-        auto it = g_data.find(cmd[1]);
-        if (it == g_data.end())
-        {
-            resp.status = RES_NX;
-            return;
-        }
-        const std::string &val = it->second; // why reference?
-        resp.data.assign(val.begin(), val.end());
+        do_get(cmd, resp);
     }
     else if (cmd.size() == 3 && cmd[0] == "set")
     {
-        g_data[cmd[1]] = cmd[2];
+        do_set(cmd, resp);
     }
     else if (cmd.size() == 2 && cmd[0] == "del")
     {
-        g_data.erase(cmd[1]);
+        do_del(cmd, resp);
     }
     else
     {

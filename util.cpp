@@ -87,3 +87,13 @@ void fd_set_nonblock(int fd)
     fcntl(fd, F_SETFL, flags); // set the flags
     // TODO: handle errors
 }
+
+uint64_t str_hash(const uint8_t *str, size_t len)
+{
+    uint32_t h = 0x811C9DC5;
+    for (size_t i = 0; i < len; i++)
+    {
+        h = (h + str[i]) * 0x01000193;
+    }
+    return h;
+}
