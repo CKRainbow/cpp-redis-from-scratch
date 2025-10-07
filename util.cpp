@@ -60,32 +60,54 @@ int32_t write_full(int fd, const char *buf, size_t n)
     return 0;
 }
 
-void buf_append(std::vector<uint8_t> &buf, const uint8_t *data, size_t len)
+void buf_append(Buffer &buf, const uint8_t *data, size_t len)
 {
     buf.insert(buf.end(), data, data + len);
 }
 
-void buf_consume(std::vector<uint8_t> &buf, size_t len)
+void buf_consume(Buffer &buf, size_t len)
 {
     buf.erase(buf.begin(), buf.begin() + len);
 }
 
-// void buf_append(struct Buffer &buf, const uint8_t *data, size_t len)
-// {
-// }
+void buf_append_u8(Buffer &buf, uint8_t v)
+{
+    buf.push_back(v);
+}
 
-// void buf_consume(struct Buffer &buf, size_t len)
-// {
-//     assert(buf.data_begin - buf.data_end >= len);
-//     buf.data_begin += len;
-// }
+void buf_append_u32(Buffer &buf, uint32_t v)
+{
+    buf_append(buf, (const uint8_t *)&v, 4);
+}
+
+void buf_append_i64(Buffer &buf, int64_t v)
+{
+    buf_append(buf, (const uint8_t *)&v, 8);
+}
+
+void buf_append_dbl(Buffer &buf, double v)
+{
+    buf_append(buf, (const uint8_t *)&v, 8);
+}
 
 void fd_set_nonblock(int fd)
 {
+    errno = 0;
     int flags = fcntl(fd, F_GETFL, 0); // get the flags
+    if (errno)
+    {
+        die("fcntl error");
+        return;
+    }
+
     flags |= O_NONBLOCK;
-    fcntl(fd, F_SETFL, flags); // set the flags
-    // TODO: handle errors
+    errno = 0;
+    (void)fcntl(fd, F_SETFL, flags); // set the flags
+    if (errno)
+    {
+        die("fcntl error");
+        return;
+    }
 }
 
 uint64_t str_hash(const uint8_t *str, size_t len)

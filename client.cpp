@@ -9,8 +9,6 @@
 
 #include "util.hpp"
 
-static int32_t query(int fd, const char *query);
-
 static int32_t send_req(int fd, std::vector<std::string> &cmd)
 {
     uint32_t len = 4; // nstr len
@@ -38,6 +36,107 @@ static int32_t send_req(int fd, std::vector<std::string> &cmd)
         cur += 4 + query.size();
     }
     return write_full(fd, (const char *)buf, len + 4);
+}
+
+static int32_t print_response(const uint8_t *data, size_t size)
+{
+    if (size < 1)
+    {
+        msg("bad response");
+        return -1;
+    }
+
+    switch (data[0])
+    {
+    case data_tag::TAG_NIL:
+        printf("(nil)\n");
+        return 1;
+    case data_tag::TAG_ERR:
+        if (size < 1 + 1 + 4)
+        {
+            msg("bad response");
+            return -1;
+        }
+        {
+            err_code code = (err_code)data[1];
+            uint32_t len = 0;
+            memcpy(&len, data + 2, 4);
+            if (size < 1 + 1 + 4 + len)
+            {
+                msg("bad response");
+                return -1;
+            }
+            printf("server says: [%u] %.*s\n", code, len, data + 1 + 1 + 4);
+            return 1 + 1 + 4 + len;
+        }
+    case data_tag::TAG_STR:
+        if (size < 1 + 4)
+        {
+            msg("bad response");
+            return -1;
+        }
+        {
+            uint32_t len = 0;
+            memcpy(&len, data + 1, 4);
+            if (size < 1 + 4 + len)
+            {
+                msg("bad response");
+                return -1;
+            }
+            printf("%.*s\n", len, data + 1 + 4);
+            return 1 + 4 + len;
+        }
+    case data_tag::TAG_INT:
+        if (size < 1 + 8)
+        {
+            msg("bad response");
+            return -1;
+        }
+        {
+            int64_t v = 0;
+            memcpy(&v, data + 1, 8);
+            printf("%ld\n", v);
+            return 1 + 8;
+        }
+    case data_tag::TAG_DBL:
+        if (size < 1 + 8)
+        {
+            msg("bad response");
+            return -1;
+        }
+        {
+            double v = 0;
+            memcpy(&v, data + 1, 8);
+            printf("%f\n", v);
+            return 1 + 8;
+        }
+    case data_tag::TAG_ARR:
+        if (size < 1 + 4)
+        {
+            msg("bad response");
+            return -1;
+        }
+        {
+            uint32_t len;
+            memcpy(&len, data + 1, 4);
+            printf("(arr) len=%u\n", len);
+            size_t arr_bytes = 1 + 4;
+            for (uint32_t i = 0; i < len; i++)
+            {
+                int32_t rv = print_response(data + arr_bytes, size - arr_bytes);
+                if (rv < 0)
+                {
+                    return rv;
+                }
+                arr_bytes += (size_t)rv;
+            }
+            printf("(arr) end\n");
+            return arr_bytes;
+        }
+    default:
+        msg("bad response");
+        return -1;
+    }
 }
 
 static int32_t read_res(int fd)
@@ -68,16 +167,13 @@ static int32_t read_res(int fd)
         return err;
     }
 
-    uint32_t status_code = 0;
-    if (n < 4)
+    int32_t rv = print_response((uint8_t *)buf + 4, n);
+    if (rv > 0 && (uint32_t)rv != n)
     {
         msg("bad response");
-        return -1;
+        rv = -1;
     }
-    memcpy(&status_code, buf + 4, 4);
-
-    printf("server says: [%u] %.*s\n", status_code, n - 4, buf + 8);
-    return 0;
+    return rv;
 }
 
 int main(int argc, char **argv)
@@ -117,46 +213,5 @@ int main(int argc, char **argv)
 
 L_DONE:
     close(fd);
-    return 0;
-}
-
-static int32_t query(int fd, const char *query)
-{
-    uint32_t n = (uint32_t)strlen(query);
-    if (n > K_MAX_MSG)
-    {
-        return -1;
-    }
-
-    char wbuf[K_MAX_MSG + 4] = {};
-    memcpy(wbuf, &n, 4);
-    memcpy(wbuf + 4, query, n);
-    if (int32_t err = write_full(fd, wbuf, n + 4))
-    {
-        return err;
-    }
-
-    char rbuf[K_MAX_MSG + 4] = {};
-    errno = 0;
-    int32_t err = read_full(fd, rbuf, 4);
-    if (err)
-    {
-        msg(errno ? "read() error" : "EOF");
-        return err;
-    }
-    memcpy(&n, rbuf, 4);
-    if (n > K_MAX_MSG)
-    {
-        msg("too long");
-        return -1;
-    }
-
-    if (int32_t err = read_full(fd, rbuf + 4, n))
-    {
-        msg("read() error");
-        return err;
-    }
-
-    printf("server says: %s\n", rbuf + 4);
     return 0;
 }

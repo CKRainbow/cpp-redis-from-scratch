@@ -28,3 +28,5 @@ struct HMap
 HNode *hm_lookup(HMap *map, HNode *key, bool (*eq)(HNode *, HNode *));
 void hm_insert(HMap *map, HNode *node);
 HNode *hm_delete(HMap *map, HNode *key, bool (*eq)(HNode *, HNode *));
+size_t hm_size(HMap *map);
+bool hm_foreach(HMap *map, bool (*cb)(HNode *, void *), void *arg);

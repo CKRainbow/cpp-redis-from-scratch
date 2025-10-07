@@ -126,3 +126,28 @@ void hm_insert(HMap *map, HNode *node)
     }
     hm_help_rehashing(map);
 }
+
+size_t hm_size(HMap *map)
+{
+    return map->newTable.size + map->oldTable.size;
+}
+
+static bool h_foreach(HTable &ht, bool (*cb)(HNode *, void *), void *arg)
+{
+    for (size_t i = 0; ht.mask != 0 && i <= ht.mask; i++)
+    {
+        for (HNode *cur = ht.table[i]; cur; cur = cur->next)
+        {
+            if (!cb(cur, arg))
+            {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+bool hm_foreach(HMap *map, bool (*cb)(HNode *, void *), void *arg)
+{
+    return h_foreach(map->newTable, cb, arg) && h_foreach(map->oldTable, cb, arg);
+}
